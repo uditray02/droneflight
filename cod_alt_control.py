@@ -11,28 +11,14 @@ class VelocityControlNode(Node):
 
         # Current state and altitude
         self.current_state = State()
-        self.current_altitude = 0.0  # Current altitude (in meters)
+        self.current_altitude = 0.0
 
         # Subscribers
-        self.state_sub = self.create_subscription(
-            State,
-            'mavros/state',
-            self.state_cb,
-            10
-        )
-        self.altitude_sub = self.create_subscription(
-            Altitude,
-            'mavros/global_position/rel_alt',
-            self.altitude_cb,
-            10
-        )
+        self.state_sub = self.create_subscription(State, 'mavros/state', self.state_cb, 10)
+        self.altitude_sub = self.create_subscription(Altitude, 'mavros/global_position/rel_alt', self.altitude_cb, 10)
 
         # Publishers
-        self.velocity_pub = self.create_publisher(
-            TwistStamped,
-            'mavros/setpoint_velocity/cmd_vel',
-            10
-        )
+        self.velocity_pub = self.create_publisher(TwistStamped, 'mavros/setpoint_velocity/cmd_vel', 10)
 
         # Service clients
         self.arming_client = self.create_client(CommandBool, 'mavros/cmd/arming')
@@ -48,40 +34,41 @@ class VelocityControlNode(Node):
         self.timer_period = 0.05  # 20Hz
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
 
-        # Velocity initialization (Linear and Angular)
-        self.velocity = TwistStamped()
-        self.velocity.twist.linear.x = float(1.0)  # Desired linear velocity along X
-        self.velocity.twist.linear.y = float(0.0)  # No velocity along Y
-        self.velocity.twist.linear.z = float(0.0)  # Desired vertical velocity
-        self.velocity.twist.angular.x = float(0.0)  # No angular velocity around X
-        self.velocity.twist.angular.y = float(0.0)  # No angular velocity around Y
-        self.velocity.twist.angular.z = float(0.0)  # Desired angular velocity around Z (yaw)
+        # Waypoint control
+        self.waypoints = [
+            (1.0, 0.0),  # Move along +X
+            (0.0, 1.0),  # Move along +Y
+            (-1.0, 0.0),  # Move along -X
+            (0.0, -1.0),  # Move along -Y
+        ]
+        self.current_waypoint = 0
+        self.waypoint_duration = 5.0  # Duration at each waypoint (seconds)
+        self.start_time = None
 
+        # Velocity initialization
+        self.velocity = TwistStamped()
+        self.velocity.twist.linear.z = 0.0
         self.last_req = self.get_clock().now()
 
     def state_cb(self, msg):
         self.current_state = msg
 
     def altitude_cb(self, msg):
-        self.current_altitude = msg.relative_alt  # Update current altitude (meters)
+        self.current_altitude = msg.relative_alt
 
     def timer_callback(self):
         now = self.get_clock().now()
 
-        # Wait until connected to the flight controller
         if not self.current_state.connected:
             self.get_logger().warn("Not connected to vehicle!")
             return
 
-        # Set OFFBOARD mode if not already in OFFBOARD
         if self.current_state.mode != "OFFBOARD" and (now - self.last_req).nanoseconds > 5e9:
             req = SetMode.Request()
             req.custom_mode = "OFFBOARD"
             future = self.set_mode_client.call_async(req)
             future.add_done_callback(self.offboard_mode_response)
             self.last_req = now
-
-        # Arm the vehicle if not already armed
         elif not self.current_state.armed and (now - self.last_req).nanoseconds > 5e9:
             req = CommandBool.Request()
             req.value = True
@@ -89,11 +76,22 @@ class VelocityControlNode(Node):
             future.add_done_callback(self.arm_response)
             self.last_req = now
 
-        # Control altitude if OFFBOARD mode is enabled
         if self.current_state.mode == "OFFBOARD":
             self.control_altitude()
 
-        # Publish velocity setpoint
+            # Control movement along waypoints
+            if self.start_time is None:
+                self.start_time = now
+            elapsed_time = (now - self.start_time).nanoseconds / 1e9
+            if elapsed_time > self.waypoint_duration:
+                self.current_waypoint = (self.current_waypoint + 1) % len(self.waypoints)
+                self.start_time = now
+
+            # Set velocity for the current waypoint
+            vx, vy = self.waypoints[self.current_waypoint]
+            self.velocity.twist.linear.x = vx
+            self.velocity.twist.linear.y = vy
+
         self.velocity_pub.publish(self.velocity)
 
     def offboard_mode_response(self, future):
@@ -107,15 +105,13 @@ class VelocityControlNode(Node):
             self.get_logger().error(f"Error enabling OFFBOARD mode: {str(e)}")
 
     def control_altitude(self):
-        # Control altitude after OFFBOARD mode is enabled
-        # Adjust the vertical velocity (velocity.twist.linear.z) for altitude control
-        target_altitude = 10.0  # Example target altitude in meters
+        target_altitude = 10.0
         if self.current_altitude < target_altitude:
-            self.velocity.twist.linear.z = float(1.0)  # Ascending
+            self.velocity.twist.linear.z = 1.0
         elif self.current_altitude > target_altitude:
-            self.velocity.twist.linear.z = float(-1.0)  # Descending
+            self.velocity.twist.linear.z = -1.0
         else:
-            self.velocity.twist.linear.z = float(0.0)  # Maintain current altitude
+            self.velocity.twist.linear.z = 0.0
 
     def arm_response(self, future):
         try:
@@ -131,7 +127,6 @@ class VelocityControlNode(Node):
 def main(args=None):
     rclpy.init(args=args)
 
-    # Create and spin the node
     velocity_control_node = VelocityControlNode()
     try:
         rclpy.spin(velocity_control_node)
