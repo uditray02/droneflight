@@ -70,8 +70,8 @@ class OffboardNode(Node):
         error_y = target_y - self.velocity.twist.linear.y
 
         # Simple proportional control for velocity
-        self.velocity.twist.linear.x += 0.1 * error_x  # Adjust forward velocity (x direction)
-        self.velocity.twist.linear.y += 0.1 * error_y  # Adjust sideways velocity (y direction)
+        self.velocity.twist.linear.x += 0.1 * error_x  #fwd vel
+        self.velocity.twist.linear.y += 0.1 * error_y  #side vel
 
         if abs(error_x) < 0.1 and abs(error_y) < 0.1:
             self.current_waypoint += 1
