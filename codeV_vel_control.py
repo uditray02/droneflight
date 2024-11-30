@@ -9,10 +9,8 @@ class VelocityControlNode(Node):
     def __init__(self):
         super().__init__('velocity_control_node')
 
-        # Current state
         self.current_state = State()
 
-        # Subscribers
         self.state_sub = self.create_subscription(
             State,
             'mavros/state',
@@ -20,24 +18,18 @@ class VelocityControlNode(Node):
             10
         )
 
-        # Publishers
         self.velocity_pub = self.create_publisher(
             TwistStamped,
             'mavros/setpoint_velocity/cmd_vel',
             10
         )
 
-        # Service clients
         self.arming_client = self.create_client(CommandBool, 'mavros/cmd/arming')
         self.set_mode_client = self.create_client(SetMode, 'mavros/set_mode')
-
-        # Ensure services are available
         self.get_logger().info("Waiting for services...")
         self.arming_client.wait_for_service()
         self.set_mode_client.wait_for_service()
         self.get_logger().info("Services are available.")
-
-        # Setpoint publishing rate
         self.timer_period = 0.05  # 20Hz
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
 
@@ -57,13 +49,10 @@ class VelocityControlNode(Node):
 
     def timer_callback(self):
         now = self.get_clock().now()
-
-        # Wait until connected to the flight controller
         if not self.current_state.connected:
             self.get_logger().warn("Not connected to vehicle!")
             return
 
-        # Set OFFBOARD mode if not already in OFFBOARD
         if self.current_state.mode != "OFFBOARD" and (now - self.last_req).nanoseconds > 5e9:
             req = SetMode.Request()
             req.custom_mode = "OFFBOARD"
@@ -71,7 +60,6 @@ class VelocityControlNode(Node):
             future.add_done_callback(self.offboard_mode_response)
             self.last_req = now
 
-        # Arm the vehicle if not already armed
         elif not self.current_state.armed and (now - self.last_req).nanoseconds > 5e9:
             req = CommandBool.Request()
             req.value = True
@@ -79,7 +67,6 @@ class VelocityControlNode(Node):
             future.add_done_callback(self.arm_response)
             self.last_req = now
 
-        # Publish velocity setpoint
         self.velocity_pub.publish(self.velocity)
 
     def offboard_mode_response(self, future):
@@ -105,8 +92,6 @@ class VelocityControlNode(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-
-    # Create and spin the node
     velocity_control_node = VelocityControlNode()
     try:
         rclpy.spin(velocity_control_node)
