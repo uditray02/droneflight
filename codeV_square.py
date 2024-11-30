@@ -12,30 +12,20 @@ class OffboardNode(Node):
         super().__init__("offboard_node_py")
 
         self.current_state = State()
-        
-        # Subscriber for MAVROS state
         self.state_sub = self.create_subscription(State, "mavros/state", self.state_cb, 10)
-
-        # Publisher for setpoint velocity
         self.velocity_pub = self.create_publisher(TwistStamped, "mavros/setpoint_velocity/cmd_vel", 10)
-
-        # Service client for arming
         self.arming_client = self.create_client(CommandBool, "/mavros/cmd/arming")
 
-        # Service client for setting mode
         self.set_mode_client = self.create_client(SetMode, "/mavros/set_mode")
-
-        # Setpoint publishing rate (20Hz)
         self.timer = self.create_timer(0.05, self.timer_callback)  # 20Hz = 1/0.05
 
         self.velocity = TwistStamped()
-
-        # Waypoints for the square path (side length = 10m)
+#square
         self.waypoints = [
-            (10.0, 0.0),  # Move forward 10 meters
-            (0.0, 10.0),  # Turn right, move 10 meters
-            (-10.0, 0.0),  # Turn right, move -10 meters (back)
-            (0.0, -10.0)   # Turn right, move -10 meters (back to start)
+            (10.0, 0.0),  #fwd 10 meters
+            (0.0, 10.0),  # right 10 meters
+            (-10.0, 0.0),  # Turn right -10 meters (back)
+            (0.0, -10.0)   # Turn right, -10 meters (back to start)
         ]
         
         self.current_waypoint = 0
@@ -49,7 +39,6 @@ class OffboardNode(Node):
             return
 
         if self.current_state.mode != "OFFBOARD" and (self.get_clock().now() - self.last_req).nanoseconds / 1e9 > 5.0:
-            # Set mode to OFFBOARD
             set_mode_req = SetMode.Request()
             set_mode_req.custom_mode = 'OFFBOARD'
             if self.set_mode_client.call_async(set_mode_req).result():
@@ -57,28 +46,25 @@ class OffboardNode(Node):
             self.last_req = self.get_clock().now()
 
         elif not self.current_state.armed and (self.get_clock().now() - self.last_req).nanoseconds / 1e9 > 5.0:
-            # Arm the vehicle
             arm_cmd = CommandBool.Request()
             arm_cmd.value = True
             if self.arming_client.call_async(arm_cmd).result():
                 self.get_logger().info("Vehicle armed")
             self.last_req = self.get_clock().now()
 
-        # Move to the current waypoint
         if self.current_waypoint < len(self.waypoints):
             target_x, target_y = self.waypoints[self.current_waypoint]
             self.move_to_waypoint(target_x, target_y)
 
     def move_to_waypoint(self, target_x, target_y):
-        # Simple proportional control to move towards target point
         error_x = target_x - self.velocity.twist.linear.x
         error_y = target_y - self.velocity.twist.linear.y
 
-        # Simple proportional control for velocity
-        self.velocity.twist.linear.x += 0.1 * error_x  # Adjust forward velocity (x direction)
-        self.velocity.twist.linear.y += 0.1 * error_y  # Adjust sideways velocity (y direction)
+        self.velocity.twist.linear.x += 0.1 * error_x  
+        self.velocity.twist.linear.y += 0.1 * error_y 
 
-        # If close enough to target, move to next waypoint
+
+        
         if abs(error_x) < 0.1 and abs(error_y) < 0.1:
             self.current_waypoint += 1
             self.get_logger().info(f"Waypoint {self.current_waypoint} reached.")
@@ -87,12 +73,8 @@ class OffboardNode(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-
     offboard_node = OffboardNode()
-
-    # Setpoint publishing MUST be faster than 2Hz
     rclpy.spin(offboard_node)
-
     offboard_node.destroy_node()
     rclpy.shutdown()
 
